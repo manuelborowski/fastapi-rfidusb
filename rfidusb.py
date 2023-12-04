@@ -1,4 +1,5 @@
 import time
+import urllib.parse
 
 from fastapi import FastAPI
 import threading, logging, glob
@@ -24,7 +25,7 @@ log.addHandler(log_handler)
 # 0.1 initial version
 # 0.2: upgrade serial port handling
 # 0.3: small bugfix
-
+# 0.4: get/set api key and url
 
 version = "0.3"
 
@@ -52,6 +53,8 @@ class Rfid7941W():
     def __init__(self):
         self.__port = None
         self.__location = None
+        self.__url = BR_URL
+        self.__api_key = BR_KEY
         self.ctr = 0
         self.prev_code = ""
 
@@ -71,6 +74,22 @@ class Rfid7941W():
     def location(self, value):
         self.__location = value
 
+    @property
+    def url(self):
+        return self.__url
+
+    @url.setter
+    def url(self, value):
+        self.__url = value
+
+    @property
+    def api_key(self):
+        return self.__api_key
+
+    @api_key.setter
+    def api_key(self, value):
+        self.__api_key = value
+
     def kick(self): # about 100ms
         if self.__port and self.__location:
             try:
@@ -83,7 +102,7 @@ class Rfid7941W():
                         if code != self.prev_code or self.ctr > 5:
                             timestamp = datetime.datetime.now().isoformat().split(".")[0]
                             try:
-                                ret = requests.post(f"{BR_URL}/api/registration/add", headers={'x-api-key': BR_KEY}, json={"location_key": self.__location, "badge_code": code, "timestamp": timestamp})
+                                ret = requests.post(f"{self.__url}/api/registration/add", headers={'x-api-key': self.__api_key}, json={"location_key": self.__location, "badge_code": code, "timestamp": timestamp})
                             except Exception as e:
                                 log.error(f"requests.post() threw exception: {e}")
                                 return
@@ -169,26 +188,47 @@ class BadgeServer():
         self.lock.release()
         return port_id
 
-    @port.setter
-    def port(self, value):
-        self.lock.acquire()
-        self.__port_id = value
-        self.lock.release()
-
     @property
     def location(self):
         self.lock.acquire()
-        location = self.__location
+        location = self.rfid.location
         self.lock.release()
         return location
 
     @location.setter
     def location(self, value):
         self.lock.acquire()
-        self.__location = value
         log.info(f"Set location, {value}")
-        self.lock.release()
         self.rfid.location = value
+        self.lock.release()
+
+    @property
+    def url(self):
+        self.lock.acquire()
+        url = self.rfid.url
+        self.lock.release()
+        return url
+
+    @url.setter
+    def url(self, value):
+        self.lock.acquire()
+        self.rfid.url = value
+        log.info(f"Set url, {value}")
+        self.lock.release()
+
+    @property
+    def api_key(self):
+        self.lock.acquire()
+        key = "xxxx"
+        self.lock.release()
+        return key
+
+    @api_key.setter
+    def api_key(self, value):
+        self.lock.acquire()
+        self.rfid.api_key = value
+        log.info(f"Set api_key")
+        self.lock.release()
 
 
 server = BadgeServer()
@@ -199,16 +239,38 @@ async def get_serial_port():
     return {"port": server.port}
 
 
-
 @app.get("/location")
 async def get_location():
     return {"location": server.location}
 
 
-
 @app.post("/location/{location}")
 def set_location(location):
     server.location = location
+    return "ok"
+
+
+@app.get("/url")
+async def get_url():
+    return {"url": server.url}
+
+
+@app.post("/url/{url}")
+def set_location(url):
+    url = urllib.parse.unquote(url)
+    url = urllib.parse.unquote(url)
+    server.url = url
+    return "ok"
+
+
+@app.get("/api_key")
+async def get_api_key():
+    return {"api_key": server.api_key}
+
+
+@app.post("/api_key/{key}")
+def set_api_key(key):
+    server.api_key = key
     return "ok"
 
 
