@@ -1,3 +1,5 @@
+import time
+
 from fastapi import FastAPI
 import threading, logging, glob
 import sys, os,  serial, re, requests, binascii, datetime
@@ -20,8 +22,10 @@ log_handler.setFormatter(log_formatter)
 log.addHandler(log_handler)
 
 # 0.1 initial version
+# 0.2: upgrade serial port handling
 
-version = "0.1"
+
+version = "0.2"
 
 #linux beep:
 # sudo apt install beep
@@ -68,36 +72,39 @@ class Rfid7941W():
 
     def kick(self): # about 100ms
         if self.__port and self.__location:
-            self.__port.write(self.read_uid)
-            rcv_raw = self.__port.read(self.resp_len)
-            if rcv_raw:
-                rcv = binascii.hexlify(rcv_raw).decode("UTF-8")
-                if rcv[6:8] == "81":  # valid uid received
-                    code = rcv[10:18]
-                    if code != self.prev_code or self.ctr > 5:
-                        timestamp = datetime.datetime.now().isoformat().split(".")[0]
-                        try:
-                            ret = requests.post(f"{BR_URL}/api/registration/add", headers={'x-api-key': BR_KEY}, json={"location_key": self.__location, "badge_code": code, "timestamp": timestamp})
-                        except Exception as e:
-                            log.error(f"requests.post() threw exception: {e}")
-                            return
-                        if ret.status_code == 200:
-                            res = ret.json()
-                            if res["status"]:
-                                log.info(f"OK, {code} at {timestamp}")
-                                if os_linux:
-                                    os.system("beep -f 1500 -l 200")
+            try:
+                self.__port.write(self.read_uid)
+                rcv_raw = self.__port.read(self.resp_len)
+                if rcv_raw:
+                    rcv = binascii.hexlify(rcv_raw).decode("UTF-8")
+                    if rcv[6:8] == "81":  # valid uid received
+                        code = rcv[10:18]
+                        if code != self.prev_code or self.ctr > 5:
+                            timestamp = datetime.datetime.now().isoformat().split(".")[0]
+                            try:
+                                ret = requests.post(f"{BR_URL}/api/registration/add", headers={'x-api-key': BR_KEY}, json={"location_key": self.__location, "badge_code": code, "timestamp": timestamp})
+                            except Exception as e:
+                                log.error(f"requests.post() threw exception: {e}")
+                                return
+                            if ret.status_code == 200:
+                                res = ret.json()
+                                if res["status"]:
+                                    log.info(f"OK, {code} at {timestamp}")
+                                    if os_linux:
+                                        os.system("beep -f 1500 -l 200")
+                                    else:
+                                        winsound.Beep(1500, 200)
                                 else:
-                                    winsound.Beep(1500, 200)
-                            else:
-                                log.error(f"FOUT, {code} at {timestamp}")
-                                if os_linux:
-                                    os.system("beep -f 1500 -l 800")
-                                else:
-                                    winsound.Beep(1500, 800)
-                        self.ctr = 0
-                    self.prev_code = code
-                    self.ctr += 1
+                                    log.error(f"FOUT, {code} at {timestamp}")
+                                    if os_linux:
+                                        os.system("beep -f 1500 -l 800")
+                                    else:
+                                        winsound.Beep(1500, 800)
+                            self.ctr = 0
+                        self.prev_code = code
+                        self.ctr += 1
+            except Exception as e:
+                log.info(f"Port detattached, {e}")
         # time.sleep(0.1)
 
 
@@ -115,13 +122,14 @@ class BadgeServer():
 
     def run(self):
         current_port_id = None
+        port_id = None
+        detached_ctr = 0
         while True:
             self.rfid.kick()
             self.usbport_ctr += 1
             self.update_ctr += 1
             if self.usbport_ctr >= 20:
                 self.usbport_ctr = 0
-                port_id = None
                 if os_linux:
                     port_names = [p.name for p in port_list.comports() if "usb" in p.name.lower()]
                     port_name = port_names[0] if len(port_names) > 0 else None
@@ -132,15 +140,23 @@ class BadgeServer():
                     if port_name:
                         port_match = re.search(r"\((.*)\)", port_name)
                         if port_match:
+                            if not port_id:
+                                time.sleep(1)
                             port_id = port_match[1]
+                    else:
+                        port_id = None
                 if port_id:
                     if port_id != current_port_id:
                         self.serial_port = serial.Serial(port_id, baudrate=115200, bytesize=serial.EIGHTBITS, parity=serial.PARITY_NONE, stopbits=serial.STOPBITS_ONE, timeout=0.1)
                         log.info(f"Set Serial port, id {port_id}")
                         current_port_id = port_id
+                        detached_ctr = 0
                 else:
                     self.serial_port = current_port_id = None
-                    log.info(f"Disable Serial port")
+                    detached_ctr += 1
+                    if detached_ctr > 4000:
+                        log.info(f"Disable Serial port")
+                        detached_ctr = 0
                 self.rfid.port = self.serial_port
                 self.__port_id = port_id if port_id else ""
 
