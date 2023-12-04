@@ -23,9 +23,10 @@ log.addHandler(log_handler)
 
 # 0.1 initial version
 # 0.2: upgrade serial port handling
+# 0.3: small bugfix
 
 
-version = "0.2"
+version = "0.3"
 
 #linux beep:
 # sudo apt install beep
@@ -154,7 +155,7 @@ class BadgeServer():
                 else:
                     self.serial_port = current_port_id = None
                     detached_ctr += 1
-                    if detached_ctr > 4000:
+                    if detached_ctr > 400000:
                         log.info(f"Disable Serial port")
                         detached_ctr = 0
                 self.rfid.port = self.serial_port
