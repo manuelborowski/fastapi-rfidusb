@@ -2,6 +2,7 @@ import time
 import urllib.parse
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 import threading, logging, glob
 import sys, os,  serial, re, requests, binascii, datetime
 import serial.tools.list_ports as port_list
@@ -26,8 +27,10 @@ log.addHandler(log_handler)
 # 0.2: upgrade serial port handling
 # 0.3: small bugfix
 # 0.4: get/set api key and url
+# 0.5: added cors.  Added api to activate/deactivate
 
-version = "0.3"
+
+version = "0.5"
 
 #linux beep:
 # sudo apt install beep
@@ -40,6 +43,14 @@ version = "0.3"
 log.info("start")
 
 app = FastAPI()
+origins = ["*",]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"])
 
 os_linux = "linux" in sys.platform
 
@@ -55,6 +66,7 @@ class Rfid7941W():
         self.__location = None
         self.__url = BR_URL
         self.__api_key = BR_KEY
+        self.__active = False
         self.ctr = 0
         self.prev_code = ""
 
@@ -90,8 +102,16 @@ class Rfid7941W():
     def api_key(self, value):
         self.__api_key = value
 
+    @property
+    def active(self):
+        return self.__active
+
+    @active.setter
+    def active(self, value):
+        self.__active = value
+
     def kick(self): # about 100ms
-        if self.__port and self.__location:
+        if self.__port and self.__location and self.__active:
             try:
                 self.__port.write(self.read_uid)
                 rcv_raw = self.__port.read(self.resp_len)
@@ -131,8 +151,6 @@ class Rfid7941W():
 class BadgeServer():
 
     def init(self):
-        self.usbport_ctr = 0
-        self.update_ctr = 0
         self.__port_id = ""
         self.__location = ""
         self.lock = threading.Lock()
@@ -143,13 +161,13 @@ class BadgeServer():
     def run(self):
         current_port_id = None
         port_id = None
-        detached_ctr = 0
+        usbport_ctr = 0
+        log_port_disabled = True
         while True:
             self.rfid.kick()
-            self.usbport_ctr += 1
-            self.update_ctr += 1
-            if self.usbport_ctr >= 20:
-                self.usbport_ctr = 0
+            usbport_ctr += 1
+            if usbport_ctr >= 20:
+                usbport_ctr = 0
                 if os_linux:
                     port_names = [p.name for p in port_list.comports() if "usb" in p.name.lower()]
                     port_name = port_names[0] if len(port_names) > 0 else None
@@ -170,13 +188,12 @@ class BadgeServer():
                         self.serial_port = serial.Serial(port_id, baudrate=115200, bytesize=serial.EIGHTBITS, parity=serial.PARITY_NONE, stopbits=serial.STOPBITS_ONE, timeout=0.1)
                         log.info(f"Set Serial port, id {port_id}")
                         current_port_id = port_id
-                        detached_ctr = 0
+                        log_port_disabled = True
                 else:
                     self.serial_port = current_port_id = None
-                    detached_ctr += 1
-                    if detached_ctr > 400000:
+                    if log_port_disabled:
                         log.info(f"Disable Serial port")
-                        detached_ctr = 0
+                        log_port_disabled = False
                 self.rfid.port = self.serial_port
                 self.__port_id = port_id if port_id else ""
 
@@ -230,6 +247,20 @@ class BadgeServer():
         log.info(f"Set api_key")
         self.lock.release()
 
+    @property
+    def active(self):
+        self.lock.acquire()
+        active = self.rfid.active
+        self.lock.release()
+        return active
+
+    @active.setter
+    def active(self, value):
+        self.lock.acquire()
+        self.rfid.active = value
+        log.info(f"Set active {value}")
+        self.lock.release()
+
 
 server = BadgeServer()
 server.init()
@@ -271,6 +302,17 @@ async def get_api_key():
 @app.post("/api_key/{key}")
 def set_api_key(key):
     server.api_key = key
+    return "ok"
+
+
+@app.get("/active")
+async def get_active():
+    return {"active": server.active}
+
+
+@app.post("/active/{setting}")
+def set_active(setting):
+    server.active = setting == "1"
     return "ok"
 
 
