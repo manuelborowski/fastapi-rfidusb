@@ -28,9 +28,10 @@ log.addHandler(log_handler)
 # 0.3: small bugfix
 # 0.4: get/set api key and url
 # 0.5: added cors.  Added api to activate/deactivate
+# 0.6: added requirements.txt
 
 
-version = "0.5"
+version = "0.6"
 
 #linux beep:
 # sudo apt install beep
@@ -51,6 +52,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["*"])
+
+#  uvicorn.exe rfidusb:app
 
 os_linux = "linux" in sys.platform
 
@@ -122,7 +125,9 @@ class Rfid7941W():
                         if code != self.prev_code or self.ctr > 5:
                             timestamp = datetime.datetime.now().isoformat().split(".")[0]
                             try:
+                                ___start = datetime.datetime.now()
                                 ret = requests.post(f"{self.__url}/api/registration/add", headers={'x-api-key': self.__api_key}, json={"location_key": self.__location, "badge_code": code, "timestamp": timestamp})
+                                log.info(f"request: {datetime.datetime.now() - ___start}")
                             except Exception as e:
                                 log.error(f"requests.post() threw exception: {e}")
                                 return
