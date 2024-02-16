@@ -7,6 +7,7 @@ import threading, logging, glob
 import sys, os,  serial, re, requests, binascii, datetime
 import serial.tools.list_ports as port_list
 from config import LOG_HANDLE, LOG_FILE, LOG_LEVEL, BR_URL, BR_KEY
+from logging.handlers import RotatingFileHandler
 
 #  enable logging
 top_log_handle = LOG_HANDLE
@@ -19,7 +20,7 @@ except:
     log_level = getattr(logging, 'INFO')
 log.setLevel(log_level)
 log_handler = logging.handlers.RotatingFileHandler(LOG_FILENAME, maxBytes=1024 * 1024, backupCount=20)
-log_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(name)s - %(message)s')
+log_formatter = RotatingFileHandler('%(asctime)s - %(levelname)s - %(name)s - %(message)s')
 log_handler.setFormatter(log_formatter)
 log.addHandler(log_handler)
 
@@ -31,7 +32,7 @@ log.addHandler(log_handler)
 # 0.6: added requirements.txt
 
 
-version = "0.6"
+version = "0.7"
 
 #linux beep:
 # sudo apt install beep
@@ -74,11 +75,11 @@ class Rfid7941W():
         self.prev_code = ""
 
     @property
-    def port(self):
+    def system_port(self):
         return self.__port
 
-    @port.setter
-    def port(self, value):
+    @system_port.setter
+    def system_port(self, value):
         self.__port = value
 
     @property
@@ -156,113 +157,127 @@ class Rfid7941W():
 class BadgeServer():
 
     def init(self):
-        self.__port_id = ""
+        self.__port_name = ""
         self.__location = ""
+        self.__api_key = ""
+        self.__url = ""
+        self.__active = False
         self.lock = threading.Lock()
         self.rfid = Rfid7941W()
         t = threading.Thread(target=self.run)
         t.start()
 
     def run(self):
-        current_port_id = None
-        port_id = None
+        current_port_name = None
+        system_port = None
         usbport_ctr = 0
         log_port_disabled = True
         while True:
             self.rfid.kick()
             usbport_ctr += 1
             if usbport_ctr >= 20:
+                self.lock.acquire()
                 usbport_ctr = 0
+                # time.sleep(1)
                 if os_linux:
                     port_names = [p.name for p in port_list.comports() if "usb" in p.name.lower()]
                     port_name = port_names[0] if len(port_names) > 0 else None
-                    port_id = "/dev/" + port_name if port_name else None
+                    self.__port_name = "/dev/" + port_name if port_name else ""
                 else:
                     port_names = [p.description for p in list(port_list.comports()) if "ch340" in p.description.lower()]
                     port_name = port_names[0] if len(port_names) > 0 else None
                     if port_name:
                         port_match = re.search(r"\((.*)\)", port_name)
                         if port_match:
-                            if not port_id:
+                            if not self.__port_name:
                                 time.sleep(1)
-                            port_id = port_match[1]
+                            self.__port_name = port_match[1]
                     else:
-                        port_id = None
-                if port_id:
-                    if port_id != current_port_id:
-                        self.serial_port = serial.Serial(port_id, baudrate=115200, bytesize=serial.EIGHTBITS, parity=serial.PARITY_NONE, stopbits=serial.STOPBITS_ONE, timeout=0.1)
-                        log.info(f"Set Serial port, id {port_id}")
-                        current_port_id = port_id
+                        self.__port_name = ""
+                if self.__port_name:
+                    if self.__port_name != current_port_name:
+                        # Although the port is present as /dev/ttyUSBxx, it is not accessible yet.  Try a few times with a delay in between
+                        try_to_open_port = 10
+                        while try_to_open_port > 0:
+                            try:
+                                system_port = serial.Serial(self.__port_name, baudrate=115200, bytesize=serial.EIGHTBITS, parity=serial.PARITY_NONE, stopbits=serial.STOPBITS_ONE, timeout=0.1)
+                                log.info(f"Set Serial port, id {self.__port_name}")
+                                try_to_open_port = 0
+                            except Exception as e:
+                                time.sleep(1)
+                                try_to_open_port -= 1
+                                if try_to_open_port <= 0:
+                                    log.error(f"Tried to open port {self.__port_name} 10 times, did not work")
+                        current_port_name = self.__port_name
                         log_port_disabled = True
                 else:
-                    self.serial_port = current_port_id = None
+                    if system_port:
+                        system_port.close()
+                    system_port = current_port_name = None
                     if log_port_disabled:
                         log.info(f"Disable Serial port")
                         log_port_disabled = False
-                self.rfid.port = self.serial_port
-                self.__port_id = port_id if port_id else ""
+                self.rfid.system_port = system_port
+                self.rfid.location = self.__location
+                self.rfid.url = self.__url
+                self.rfid.api_key = self.__api_key
+                self.rfid.active = self.__active
+                # log.info(f", {self.rfid.location}, {self.rfid.url}, {self.rfid.api_key}, {self.rfid.active}, {self.rfid.system_port} ")
+                self.lock.release()
 
 
     @property
     def port(self):
         self.lock.acquire()
-        port_id = self.__port_id
+        port_id = self.__port_name
         self.lock.release()
         return port_id
 
     @property
     def location(self):
-        self.lock.acquire()
-        location = self.rfid.location
-        self.lock.release()
-        return location
+        return "NA"
+
 
     @location.setter
     def location(self, value):
         self.lock.acquire()
         log.info(f"Set location, {value}")
-        self.rfid.location = value
+        self.__location = value
         self.lock.release()
 
     @property
     def url(self):
-        self.lock.acquire()
-        url = self.rfid.url
-        self.lock.release()
-        return url
+        return "NA"
+
 
     @url.setter
     def url(self, value):
         self.lock.acquire()
-        self.rfid.url = value
+        self.__url = value
         log.info(f"Set url, {value}")
         self.lock.release()
 
     @property
     def api_key(self):
-        self.lock.acquire()
-        key = "xxxx"
-        self.lock.release()
-        return key
+        return "NA"
+
 
     @api_key.setter
     def api_key(self, value):
         self.lock.acquire()
-        self.rfid.api_key = value
+        self.__api_key = value
         log.info(f"Set api_key")
         self.lock.release()
 
     @property
     def active(self):
-        self.lock.acquire()
-        active = self.rfid.active
-        self.lock.release()
-        return active
+        return "NA"
+
 
     @active.setter
     def active(self, value):
         self.lock.acquire()
-        self.rfid.active = value
+        self.__active = value
         log.info(f"Set active {value}")
         self.lock.release()
 
@@ -275,20 +290,10 @@ async def get_serial_port():
     return {"port": server.port}
 
 
-@app.get("/location")
-async def get_location():
-    return {"location": server.location}
-
-
 @app.post("/location/{location}")
 def set_location(location):
     server.location = location
     return "ok"
-
-
-@app.get("/url")
-async def get_url():
-    return {"url": server.url}
 
 
 @app.post("/url/{url}")
@@ -299,20 +304,10 @@ def set_location(url):
     return "ok"
 
 
-@app.get("/api_key")
-async def get_api_key():
-    return {"api_key": server.api_key}
-
-
 @app.post("/api_key/{key}")
 def set_api_key(key):
     server.api_key = key
     return "ok"
-
-
-@app.get("/active")
-async def get_active():
-    return {"active": server.active}
 
 
 @app.post("/active/{setting}")
