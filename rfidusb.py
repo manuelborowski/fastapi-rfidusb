@@ -30,9 +30,9 @@ log.addHandler(log_handler)
 # 0.4: get/set api key and url
 # 0.5: added cors.  Added api to activate/deactivate
 # 0.6: added requirements.txt
+# 0.8: bugfix linux beep command
 
-
-version = "0.7"
+version = "0.8"
 
 #linux beep:
 # sudo apt install beep
@@ -137,13 +137,13 @@ class Rfid7941W():
                                 if res["status"]:
                                     log.info(f"OK, {code} at {timestamp}")
                                     if os_linux:
-                                        os.system("beep -f 1500 -l 200")
+                                        os.system("/usr/bin/beep -f 1500 -l 200")
                                     else:
                                         winsound.Beep(1500, 200)
                                 else:
                                     log.error(f"FOUT, {code} at {timestamp}")
                                     if os_linux:
-                                        os.system("beep -f 1500 -l 800")
+                                        os.system("/usr/bin/beep -f 1500 -l 800")
                                     else:
                                         winsound.Beep(1500, 800)
                             self.ctr = 0
