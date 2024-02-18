@@ -19,8 +19,8 @@ try:
 except:
     log_level = getattr(logging, 'INFO')
 log.setLevel(log_level)
-log_handler = logging.handlers.RotatingFileHandler(LOG_FILENAME, maxBytes=1024 * 1024, backupCount=20)
-log_formatter = RotatingFileHandler('%(asctime)s - %(levelname)s - %(name)s - %(message)s')
+log_handler = RotatingFileHandler(LOG_FILENAME, maxBytes=1024 * 1024, backupCount=20)
+log_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(name)s - %(message)s')
 log_handler.setFormatter(log_formatter)
 log.addHandler(log_handler)
 
@@ -31,8 +31,10 @@ log.addHandler(log_handler)
 # 0.5: added cors.  Added api to activate/deactivate
 # 0.6: added requirements.txt
 # 0.8: bugfix linux beep command
+# 0.9: bugfix log-handler.  Uninstall serial-module.
 
-version = "0.8"
+
+version = "0.9"
 
 #linux beep:
 # sudo apt install beep
