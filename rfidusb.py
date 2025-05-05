@@ -32,9 +32,9 @@ log.addHandler(log_handler)
 # 0.6: added requirements.txt
 # 0.8: bugfix linux beep command
 # 0.9: bugfix log-handler.  Uninstall serial-module.
+# 0.10: when no serial rfid attached, sleep for 2 seconds in loop to avoid processor hogging
 
-
-version = "0.9"
+version = "0.10"
 
 #linux beep:
 # sudo apt install beep
@@ -219,6 +219,7 @@ class BadgeServer():
                     if log_port_disabled:
                         log.info(f"Disable Serial port")
                         log_port_disabled = False
+                    time.sleep(2)
                 self.rfid.system_port = system_port
                 self.rfid.location = self.__location
                 self.rfid.url = self.__url
