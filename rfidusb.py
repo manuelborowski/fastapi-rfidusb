@@ -33,8 +33,9 @@ log.addHandler(log_handler)
 # 0.8: bugfix linux beep command
 # 0.9: bugfix log-handler.  Uninstall serial-module.
 # 0.10: when no serial rfid attached, sleep for 2 seconds in loop to avoid processor hogging
+# 0.11: add 1 sec sleep when a registration is sent to server
 
-version = "0.10"
+version = "0.11"
 
 #linux beep:
 # sudo apt install beep
@@ -130,7 +131,11 @@ class Rfid7941W():
                             try:
                                 ___start = datetime.datetime.now()
                                 ret = requests.post(f"{self.__url}/api/registration/add", headers={'x-api-key': self.__api_key}, json={"location_key": self.__location, "badge_code": code, "timestamp": timestamp})
-                                log.info(f"request: {datetime.datetime.now() - ___start}")
+                                delta = datetime.datetime.now() - ___start
+                                if delta.total_seconds() < 1:
+                                    time.sleep(1)
+                                delta = datetime.datetime.now() - ___start
+                                log.info(f"request: {delta}")
                             except Exception as e:
                                 log.error(f"requests.post() threw exception: {e}")
                                 return
