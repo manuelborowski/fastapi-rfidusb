@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import threading, logging, glob
 import sys, os,  serial, re, requests, binascii, datetime
 import serial.tools.list_ports as port_list
-from config import LOG_HANDLE, LOG_FILE, LOG_LEVEL, BR_URL, BR_KEY
+from config import LOG_HANDLE, LOG_FILE, LOG_LEVEL, BR_URL, BR_KEY, RESOLUTION
 from logging.handlers import RotatingFileHandler
 
 #  enable logging
@@ -34,8 +34,9 @@ log.addHandler(log_handler)
 # 0.9: bugfix log-handler.  Uninstall serial-module.
 # 0.10: when no serial rfid attached, sleep for 2 seconds in loop to avoid processor hogging
 # 0.11: add 1 sec sleep when a registration is sent to server
+# 0.12: add resolution, second (default) or millisecond
 
-version = "0.11"
+version = "0.12"
 
 #linux beep:
 # sudo apt install beep
@@ -44,6 +45,8 @@ version = "0.11"
 # sudo apt autoremove brltty
 # sudo usermod -aG dialout badgereader
 
+# uvicorn.exe rfidusb:app
+# taskkill /F /IM uvicorn.exe
 
 log.info("start")
 
@@ -57,7 +60,6 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["*"])
 
-#  uvicorn.exe rfidusb:app
 
 os_linux = "linux" in sys.platform
 
@@ -74,6 +76,7 @@ class Rfid7941W():
         self.__url = BR_URL
         self.__api_key = BR_KEY
         self.__active = False
+        self.__resolution = RESOLUTION
         self.ctr = 0
         self.prev_code = ""
 
@@ -117,6 +120,14 @@ class Rfid7941W():
     def active(self, value):
         self.__active = value
 
+    @property
+    def resolution(self):
+        return self.__resolution
+
+    @resolution.setter
+    def resolution(self, value):
+        self.__resolution = value
+
     def kick(self): # about 100ms
         if self.__port and self.__location and self.__active:
             try:
@@ -127,7 +138,12 @@ class Rfid7941W():
                     if rcv[6:8] == "81":  # valid uid received
                         code = rcv[10:18]
                         if code != self.prev_code or self.ctr > 5:
-                            timestamp = datetime.datetime.now().isoformat().split(".")[0]
+                            log.info(self.__resolution)
+                            if self.__resolution == "second":
+                                timestamp = datetime.datetime.now().isoformat()[:19]
+                            else:
+                                timestamp = datetime.datetime.now().isoformat()[:23]
+                            log.info(timestamp)
                             try:
                                 ___start = datetime.datetime.now()
                                 ret = requests.post(f"{self.__url}/api/registration/add", headers={'x-api-key': self.__api_key}, json={"location_key": self.__location, "badge_code": code, "timestamp": timestamp})
@@ -169,6 +185,7 @@ class BadgeServer():
         self.__api_key = ""
         self.__url = ""
         self.__active = False
+        self.__resolution = ""
         self.lock = threading.Lock()
         self.rfid = Rfid7941W()
         t = threading.Thread(target=self.run)
@@ -230,6 +247,7 @@ class BadgeServer():
                 self.rfid.url = self.__url
                 self.rfid.api_key = self.__api_key
                 self.rfid.active = self.__active
+                self.rfid.resolution = self.__resolution
                 # log.info(f", {self.rfid.location}, {self.rfid.url}, {self.rfid.api_key}, {self.rfid.active}, {self.rfid.system_port} ")
                 self.lock.release()
 
@@ -257,7 +275,6 @@ class BadgeServer():
     def url(self):
         return "NA"
 
-
     @url.setter
     def url(self, value):
         self.lock.acquire()
@@ -268,7 +285,6 @@ class BadgeServer():
     @property
     def api_key(self):
         return "NA"
-
 
     @api_key.setter
     def api_key(self, value):
@@ -281,12 +297,22 @@ class BadgeServer():
     def active(self):
         return "NA"
 
-
     @active.setter
     def active(self, value):
         self.lock.acquire()
         self.__active = value
         log.info(f"Set active {value}")
+        self.lock.release()
+
+    @property
+    def resolution(self):
+        return "NA"
+
+    @resolution.setter
+    def resolution(self, value):
+        self.lock.acquire()
+        self.__resolution = value
+        log.info(f"Set resolution {value}")
         self.lock.release()
 
 
@@ -321,6 +347,12 @@ def set_api_key(key):
 @app.post("/active/{setting}")
 def set_active(setting):
     server.active = setting == "1"
+    return "ok"
+
+
+@app.post("/resolution/{resolution}")
+def set_resolution(resolution):
+    server.resolution = resolution
     return "ok"
 
 
