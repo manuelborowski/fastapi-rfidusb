@@ -35,8 +35,9 @@ log.addHandler(log_handler)
 # 0.10: when no serial rfid attached, sleep for 2 seconds in loop to avoid processor hogging
 # 0.11: add 1 sec sleep when a registration is sent to server
 # 0.12: add resolution, second (default) or millisecond
+# 0.13: add comment
 
-version = "0.12"
+version = "0.13"
 
 #linux beep:
 # sudo apt install beep
@@ -47,6 +48,8 @@ version = "0.12"
 
 # uvicorn.exe rfidusb:app
 # taskkill /F /IM uvicorn.exe
+
+# take into account the reader is attached to, detached from or switched to another USB port
 
 log.info("start")
 
@@ -131,13 +134,13 @@ class Rfid7941W():
     def kick(self): # about 100ms
         if self.__port and self.__location and self.__active:
             try:
-                self.__port.write(self.read_uid)
+                self.__port.write(self.read_uid) # command to get the serial number
                 rcv_raw = self.__port.read(self.resp_len)
                 if rcv_raw:
                     rcv = binascii.hexlify(rcv_raw).decode("UTF-8")
                     if rcv[6:8] == "81":  # valid uid received
                         code = rcv[10:18]
-                        if code != self.prev_code or self.ctr > 5:
+                        if code != self.prev_code or self.ctr > 5: # wait at least 5 seconds before the same badge can be scanned or continue directly when a different badge is scanned.
                             log.info(self.__resolution)
                             if self.__resolution == "second":
                                 timestamp = datetime.datetime.now().isoformat()[:19]
@@ -147,6 +150,7 @@ class Rfid7941W():
                             try:
                                 ___start = datetime.datetime.now()
                                 ret = requests.post(f"{self.__url}/api/registration/add", headers={'x-api-key': self.__api_key}, json={"location_key": self.__location, "badge_code": code, "timestamp": timestamp})
+                                # wait at least 1 second
                                 delta = datetime.datetime.now() - ___start
                                 if delta.total_seconds() < 1:
                                     time.sleep(1)
@@ -180,26 +184,27 @@ class Rfid7941W():
 class BadgeServer():
 
     def init(self):
-        self.__port_name = ""
+        self.__port_name = "" # e.g. /dev/ttyUSB0.  Normally, the correct port is returned (with the RFID reader attached)
         self.__location = ""
         self.__api_key = ""
         self.__url = ""
         self.__active = False
-        self.__resolution = ""
+        self.__resolution = RESOLUTION
         self.lock = threading.Lock()
         self.rfid = Rfid7941W()
         t = threading.Thread(target=self.run)
         t.start()
 
+    # run is executed on a separate thread from uvicorn, a lock is required to pass info between them.
     def run(self):
         current_port_name = None
         system_port = None
         usbport_ctr = 0
         log_port_disabled = True
         while True:
-            self.rfid.kick()
+            self.rfid.kick() # every loop, check if a badge is presented to the reader
             usbport_ctr += 1
-            if usbport_ctr >= 20:
+            if usbport_ctr >= 20: # every 20 loops, check the USB port and update settings (location, url, ...)
                 self.lock.acquire()
                 usbport_ctr = 0
                 # time.sleep(1)
@@ -219,7 +224,7 @@ class BadgeServer():
                     else:
                         self.__port_name = ""
                 if self.__port_name:
-                    if self.__port_name != current_port_name:
+                    if self.__port_name != current_port_name: # if the reader is switched to another port
                         # Although the port is present as /dev/ttyUSBxx, it is not accessible yet.  Try a few times with a delay in between
                         try_to_open_port = 10
                         while try_to_open_port > 0:
@@ -234,7 +239,7 @@ class BadgeServer():
                                     log.error(f"Tried to open port {self.__port_name} 10 times, did not work")
                         current_port_name = self.__port_name
                         log_port_disabled = True
-                else:
+                else: # reader is detached
                     if system_port:
                         system_port.close()
                     system_port = current_port_name = None
