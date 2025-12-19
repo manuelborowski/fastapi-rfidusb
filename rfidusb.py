@@ -1,3 +1,6 @@
+# Standalone server that needs to be configured by the client-browser (url, key, ...)
+# RFID registrations are sent directly to the badge-registration-server
+
 import time
 import urllib.parse
 
@@ -36,8 +39,9 @@ log.addHandler(log_handler)
 # 0.11: add 1 sec sleep when a registration is sent to server
 # 0.12: add resolution, second (default) or millisecond
 # 0.13: add comment
+# 0.14: add comment
 
-version = "0.13"
+version = "0.14"
 
 #linux beep:
 # sudo apt install beep
