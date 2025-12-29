@@ -27,8 +27,9 @@ log_handler.setFormatter(log_formatter)
 log.addHandler(log_handler)
 
 # 0.15 initial version of websockets
+# 0.16: when changing the administered state, return (ws event) the adminstered state anded with the operational state
 
-version = "0.15"
+version = "0.16"
 
 class RfidScanner():
     def __init__(self):
@@ -126,7 +127,7 @@ def serial_worker():
     global global_receive_data
     global global_receive_data_available
     check_usb_port_ctr = 0 # every loop takes 0.2 sec.  usb-port is checked every 10 * 0.2 sec (2 sec)
-    previous_scanner_state = None
+    previous_scanner_state = False
     rfid_scanner = RfidScanner()
 
     while not stop_event.is_set():
@@ -151,6 +152,8 @@ def serial_worker():
                 log.info(f"ws received {global_receive_data}")
                 if "status" in global_receive_data:
                     rfid_scanner.active = global_receive_data["status"]
+                    global_send_data_available = True
+                    global_send_data = {"scanner_state": {"state": previous_scanner_state and rfid_scanner.active}}
         cycle_delta = (datetime.now() - cycle_start).microseconds / 1000 # number of milliseconds
         if cycle_delta < 200:
             time.sleep((200 - cycle_delta) / 1000)
