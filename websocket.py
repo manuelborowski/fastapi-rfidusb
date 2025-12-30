@@ -8,6 +8,9 @@ from datetime import datetime
 import serial
 import serial.tools.list_ports as port_list
 
+if not "linux" in sys.platform:
+    import winsound
+
 LOG_HANDLE = 'FRFID'
 LOG_FILE = 'frid-log'
 LOG_LEVEL = "INFO"
@@ -28,8 +31,11 @@ log.addHandler(log_handler)
 
 # 0.15 initial version of websockets
 # 0.16: when changing the administered state, return (ws event) the adminstered state anded with the operational state
+# 0.17: introduced beep(), on windows use winsound.Beep(), on linux, create a separate shellscript that runs at startup.
+# It checks for the creation in the /tmp directory and when present, removes it and plays a sound.  The file is created by beep()
+# when required.
 
-version = "0.16"
+version = "0.17"
 
 class RfidScanner():
     def __init__(self):
@@ -44,6 +50,13 @@ class RfidScanner():
         self.current_port_name = None
         self.log_port_disabled = True
 
+    def beep(self):
+        if self.os_is_linux:
+            with open('/tmp/beep-request', 'w') as f:
+                f.write('beep\n')
+        else:
+            winsound.Beep(1500, 200)
+
     def read(self): # about every 200ms
         if self.system_port and self.active:
             try:
@@ -57,6 +70,7 @@ class RfidScanner():
                             timestamp = datetime.now().isoformat()[:23]
                             self.same_code_ctr = 10 # 10 x 200ms = 2 secs
                             self.prev_code = code
+                            self.beep()
                             return {"timestamp": timestamp, "code": code}
                         self.same_code_ctr -= 1
                         return None
