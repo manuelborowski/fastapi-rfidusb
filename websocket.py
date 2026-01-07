@@ -5,7 +5,7 @@ from logging.handlers import RotatingFileHandler
 import threading, re
 import time
 from datetime import datetime
-import serial
+import serial, socket
 import serial.tools.list_ports as port_list
 
 if not "linux" in sys.platform:
@@ -34,8 +34,9 @@ log.addHandler(log_handler)
 # 0.17: introduced beep(), on windows use winsound.Beep(), on linux, create a separate shellscript that runs at startup.
 # It checks for the creation in the /tmp directory and when present, removes it and plays a sound.  The file is created by beep()
 # when required.
+# 0.18: added hostname for logging
 
-version = "0.17"
+version = "0.18"
 
 class RfidScanner():
     def __init__(self):
@@ -49,6 +50,7 @@ class RfidScanner():
         self.same_code_ctr = 0
         self.current_port_name = None
         self.log_port_disabled = True
+        self.hostname = socket.gethostname()
 
     def beep(self):
         if self.os_is_linux:
@@ -71,7 +73,7 @@ class RfidScanner():
                             self.same_code_ctr = 10 # 10 x 200ms = 2 secs
                             self.prev_code = code
                             self.beep()
-                            return {"timestamp": timestamp, "code": code}
+                            return {"timestamp": timestamp, "code": code, "hostname": self.hostname}
                         self.same_code_ctr -= 1
                         return None
             except Exception as e:
