@@ -35,8 +35,9 @@ log.addHandler(log_handler)
 # It checks for the creation in the /tmp directory and when present, removes it and plays a sound.  The file is created by beep()
 # when required.
 # 0.18: added hostname for logging
+# 0.19: added logging.  Bugfixed issue with same_code_ctr
 
-version = "0.18"
+version = "0.19"
 
 class RfidScanner():
     def __init__(self):
@@ -66,6 +67,7 @@ class RfidScanner():
                 rcv_raw = self.system_port.read(self.resp_len)
                 if rcv_raw:
                     rcv = binascii.hexlify(rcv_raw).decode("UTF-8")
+                    log.debug(f"system-port read {rcv}, prev_code {self.prev_code}, same_code_ct {self.same_code_ctr}")
                     if rcv[6:8] == "81":  # valid uid received
                         code = rcv[10:18]
                         if code != self.prev_code or self.same_code_ctr <= 0: # wait at least 2 seconds before the same badge can be scanned or continue directly when a different badge is scanned.
@@ -74,8 +76,8 @@ class RfidScanner():
                             self.prev_code = code
                             self.beep()
                             return {"timestamp": timestamp, "code": code, "hostname": self.hostname}
-                        self.same_code_ctr -= 1
-                        return None
+                self.same_code_ctr -= 1 if self.same_code_ctr > 0 else 0
+                return None
             except Exception as e:
                 log.info(f"Port detattached, {e}")
             return None
@@ -155,12 +157,14 @@ def serial_worker():
                 with lock:
                     global_send_data_available = True
                     global_send_data = {"scanner_state": {"state": scanner_state}}
+                    log.info(f"ws send {global_send_data}")
             check_usb_port_ctr = 0
         read_result = rfid_scanner.read()
         if read_result is not None:
             with lock:
                 global_send_data_available = True
                 global_send_data = {"read": read_result}
+                log.info(f"ws send {global_send_data}")
         check_usb_port_ctr += 1
         with lock:
             if global_receive_data_available:
