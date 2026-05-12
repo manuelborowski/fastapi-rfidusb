@@ -36,6 +36,7 @@ log.addHandler(log_handler)
 # when required.
 # 0.18: added hostname for logging
 # 0.19: added logging.  Bugfixed issue with same_code_ctr
+# 0.20: requirements.txt, remove version-fix to avoid problems with python 3.14 and up
 
 version = "0.19"
 
