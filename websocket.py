@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 import asyncio, sys, binascii, logging, os, uvicorn
 from logging.handlers import RotatingFileHandler
 import threading, re
+from queue import Queue, Empty
 import time
 from datetime import datetime
 import serial, socket
@@ -37,6 +38,7 @@ log.addHandler(log_handler)
 # 0.18: added hostname for logging
 # 0.19: added logging.  Bugfixed issue with same_code_ctr
 # 0.20: requirements.txt, remove version-fix to avoid problems with python 3.14 and up
+# 0.21: websockets, updated protocol
 
 version = "0.19"
 
@@ -130,21 +132,18 @@ class RfidScanner():
         return status
 
 
-global_send_data = None
-global_send_data_available = False
-global_receive_data = None
-global_receive_data_available = False
-lock = threading.Lock()
+clients = set() # each browser(tab) is a clinet
+active_clients = set()
+clients_lock = threading.Lock()
+main_loop = None
 stop_event = threading.Event()
+receive_queue = Queue()
 
 # Accesses the RFID scanner via the serial/USB interface.
 # It is a separate thread because it is not sure if the serial library is blocking or not.  If it is blocking, using async would block the whole program.
 # It cannot use websockets directly, so it uses a lock to hand over the scanned RFID to ws_sender.
 def serial_worker():
-    global global_send_data
-    global global_send_data_available
-    global global_receive_data
-    global global_receive_data_available
+    global main_loop
     check_usb_port_ctr = 0 # every loop takes 0.2 sec.  usb-port is checked every 10 * 0.2 sec (2 sec)
     previous_scanner_state = False
     rfid_scanner = RfidScanner()
@@ -155,26 +154,24 @@ def serial_worker():
             scanner_state = rfid_scanner.check_usb_port()
             if scanner_state != previous_scanner_state:
                 previous_scanner_state = scanner_state
-                with lock:
-                    global_send_data_available = True
-                    global_send_data = {"scanner_state": {"state": scanner_state}}
-                    log.info(f"ws send {global_send_data}")
+                data = {"scanner_state": {"state": scanner_state}}
+                log.info(f"ws queue {data}")
+                main_loop.call_soon_threadsafe(broadcast, data)
             check_usb_port_ctr = 0
         read_result = rfid_scanner.read()
         if read_result is not None:
-            with lock:
-                global_send_data_available = True
-                global_send_data = {"read": read_result}
-                log.info(f"ws send {global_send_data}")
+            data = {"read": read_result}
+            log.info(f"ws queue {data}")
+            main_loop.call_soon_threadsafe(broadcast, data)
         check_usb_port_ctr += 1
-        with lock:
-            if global_receive_data_available:
-                global_receive_data_available = False
-                log.info(f"ws received {global_receive_data}")
-                if "status" in global_receive_data:
-                    rfid_scanner.active = global_receive_data["status"]
-                    global_send_data_available = True
-                    global_send_data = {"scanner_state": {"state": previous_scanner_state and rfid_scanner.active}}
+        try:
+            status = receive_queue.get_nowait()
+            log.info(f"ws received {{'status': {status}}}")
+            rfid_scanner.active = status
+            data = {"scanner_state": {"state": previous_scanner_state and rfid_scanner.active}}
+            main_loop.call_soon_threadsafe(broadcast, data)
+        except Empty:
+            pass
         cycle_delta = (datetime.now() - cycle_start).microseconds / 1000 # number of milliseconds
         if cycle_delta < 200:
             time.sleep((200 - cycle_delta) / 1000)
@@ -183,6 +180,8 @@ def serial_worker():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # startup, start serial thread
+    global main_loop
+    main_loop = asyncio.get_running_loop()
     log.info("Starting serial worker thread")
     thread = threading.Thread(target=serial_worker, daemon=True)
     thread.start()
@@ -197,41 +196,59 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-# async cannot block (i.e. cannot use blocking libraries), therefore use a lock to sync data between serial_worker and this function.
-async def ws_sender(ws: WebSocket):
-    global global_send_data_available
+# Each connected client gets its own unbounded queue. The serial worker schedules
+# broadcasts on the asyncio loop, and each sender drains its client's queue.
+def broadcast(data):
+    with clients_lock:
+        for queue in tuple(clients):
+            queue.put_nowait(data)
+
+
+async def ws_sender(ws: WebSocket, queue: asyncio.Queue):
     try:
-        data = None
         while True:
-            await asyncio.sleep(1)
-            with lock:
-                if global_send_data_available:
-                    global_send_data_available = False
-                    data = global_send_data
-            if data is not None:
-                await ws.send_json(data)
-                data = None
-    except Exception:
-        pass
+            data = await queue.get()
+            await ws.send_json(data)
+            log.info(f"ws sent {data}")
+    except Exception as e:
+        log.info(f"WebSocket sender stopped: {e}")
 
 
+# for each client, add a queue and a task
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
-    global global_receive_data
-    global global_receive_data_available
     await ws.accept()
-    task = asyncio.create_task(ws_sender(ws))
+    queue = asyncio.Queue()
+    with clients_lock:
+        clients.add(queue)
+    task = asyncio.create_task(ws_sender(ws, queue))
 
     try:
         while True:
             data = await ws.receive_json()
-            with lock:
-                global_receive_data_available = True
-                global_receive_data = data
+            if "status" in data:
+                was_active = bool(active_clients)
+                if data["status"]:
+                    active_clients.add(queue)
+                else:
+                    active_clients.discard(queue)
+                is_active = bool(active_clients)
+                if is_active != was_active:
+                    receive_queue.put(is_active)
     except WebSocketDisconnect:
         pass
     finally:
+        was_active = bool(active_clients)
+        active_clients.discard(queue)
+        if bool(active_clients) != was_active:
+            receive_queue.put(bool(active_clients))
+        with clients_lock:
+            clients.discard(queue)
         task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 
 if __name__ == "__main__":
